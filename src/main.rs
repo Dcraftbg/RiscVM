@@ -50,6 +50,9 @@ fn setup_simple(ram: &mut Vec<u8>) -> Setup {
         ].into_boxed_slice());
     Setup { sp: STACK_BASE, layout }
 }
+enum Machine {
+    Simple,
+}
 fn main() -> ExitCode {
     let mut args = env::args();
     let mut build = Build {
@@ -57,10 +60,19 @@ fn main() -> ExitCode {
         ipath: String::new(),
         dbg: false
     };
+    let mut machine = Machine::Simple;
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "-dbg" => {
-                build.dbg = true;
+            "-dbg" => build.dbg = true,
+            arg if arg.starts_with("-m") => {
+                let arg = arg.strip_prefix("-m").unwrap();
+                machine = match arg {
+                    "s" | "simple" => Machine::Simple,
+                    _ => {
+                        eprintln!("ERROR: Unknown machine: `{}`", arg);
+                        return ExitCode::FAILURE;
+                    }
+                }
             }
             _ => {
                 if build.ipath.is_empty() { build.ipath = arg; }
@@ -82,7 +94,9 @@ fn main() -> ExitCode {
         }
         Ok(v) => v,
     };
-    let setup = setup_simple(&mut data);
+    let setup = match machine {
+        Machine::Simple => setup_simple(&mut data),
+    };
     let mut vm = vm::VM::new(&setup.layout, &mut data);
     vm.set_rsp(setup.sp);
     if build.dbg {
