@@ -247,7 +247,19 @@ impl <'a> VM <'a> {
                 vec![
                     Region {
                         addr: 0,
-                        size: ram_len
+                        size: SERIAL_OUT
+                    },
+                    Region {
+                        addr: SERIAL_OUT,
+                        size: 1
+                    },
+                    Region {
+                        addr: EXIT,
+                        size: 1
+                    },
+                    Region {
+                        addr: EXIT+1,
+                        size: ram_len-EXIT+1,
                     }
                 ].into_boxed_slice()
             ), ip: 0, regs: [0; 32] }
@@ -256,47 +268,29 @@ impl <'a> VM <'a> {
         self.ip as u32 as usize
     }
     fn write(&mut self, mut addr: usize, mut bytes: &[u8]) {
-        const SERIAL_OUT: usize = 0x6969;
-        const EXIT: usize = 0x7000;
-        match (addr, bytes.len()) {
-            (SERIAL_OUT, 1) => {
-                print!("{}", bytes[0] as char);
-            }
-            (EXIT, 1) => {
-                eprintln!("Exiting with {}", bytes[0] as i32);
-                exit(bytes[0] as i32)
-            }
-            _ => {
-                while !bytes.is_empty() {
-                    let region = match self.regions.find_region(addr) {
-                        Some(v) => {
-                            v
-                        }
-                        None => {
-                            panic!("Exception: Out of bounds write at {:08X} (ip=0x{:08X}", addr, self.ip);
-                        }
-                    }.clone();
-                    let to_write = bytes.len().min(region.size);
-                    let (bytes_to_write, left) = bytes.split_at(to_write);
-                    bytes = left;
-                    let off = addr-region.addr;
-                    addr += to_write;
-                    region.write(self, off, bytes_to_write).expect("Failed to write");
-                }
-            }
-        }
-
-    }
-
-    fn read(&mut self, mut addr: usize, mut bytes: &mut [u8]) {
         while !bytes.is_empty() {
             let region = match self.regions.find_region(addr) {
                 Some(v) => {
                     v
                 }
                 None => {
-                    panic!("Exception: Out of bounds write at {:08X} (ip=0x{:08X})", addr, self.ip);
+                    panic!("Exception: Out of bounds write at {:08X} (ip=0x{:08X}", addr, self.ip);
                 }
+            }.clone();
+            let to_write = bytes.len().min(region.size);
+            let (bytes_to_write, left) = bytes.split_at(to_write);
+            bytes = left;
+            let off = addr-region.addr;
+            addr += to_write;
+            region.write(self, off, bytes_to_write).expect("Failed to write");
+        }
+    }
+
+    fn read(&mut self, mut addr: usize, mut bytes: &mut [u8]) {
+        while !bytes.is_empty() {
+            let region = match self.regions.find_region(addr) {
+                Some(v) => v,
+                None => panic!("Exception: Out of bounds write at {:08X} (ip=0x{:08X})", addr, self.ip),
             }.clone();
             let to_read = bytes.len().min(region.size);
             let (bytes_to_read, left) = bytes.split_at_mut(to_read);
@@ -490,6 +484,8 @@ struct Build {
     dbg: bool,
 }
 
+const SERIAL_OUT: usize = 0x6969;
+const EXIT: usize = 0x7000;
 #[derive(Debug, Clone, Copy)]
 struct Region {
     addr: usize,
@@ -497,7 +493,18 @@ struct Region {
 }
 impl Region {
     fn write(&self, vm: &mut VM, off: usize, bytes: &[u8]) -> Result<(), ()> {
-        vm.ram[self.addr+off..self.addr+off+bytes.len()].copy_from_slice(bytes);
+        match self.addr {
+            SERIAL_OUT => {
+                print!("{}", bytes[0] as char);
+            }
+            EXIT => {
+                eprintln!("Exiting with {}", bytes[0] as i32);
+                exit(bytes[0] as i32)
+            }
+            _ => {
+                vm.ram[self.addr+off..self.addr+off+bytes.len()].copy_from_slice(bytes);
+            }
+        }
         Ok(())
     }
     fn read(&self, vm: &mut VM, off: usize, bytes: &mut [u8]) -> Result<(), ()> {
