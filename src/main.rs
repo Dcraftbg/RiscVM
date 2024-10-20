@@ -1,5 +1,5 @@
 use std::{env, fs, io::{self, BufRead, Write}, process::ExitCode};
-use region::{Region, RegionList};
+use region::{MemoryMeta, Region, RegionList, SerialMeta, ExitMeta};
 mod region;
 mod inst;
 mod off;
@@ -55,18 +55,22 @@ fn main() -> ExitCode {
     let simple_layout = RegionList(
         vec![
             Region {
+                meta: MemoryMeta::new(),
                 addr: 0,
                 size: SERIAL_OUT
             },
             Region {
+                meta: SerialMeta::new(),
                 addr: SERIAL_OUT,
                 size: 1
             },
             Region {
+                meta: ExitMeta::new(),
                 addr: EXIT,
                 size: 1
             },
             Region {
+                meta: MemoryMeta::new(),
                 addr: EXIT+1,
                 size: data.len()-EXIT+1,
             }
