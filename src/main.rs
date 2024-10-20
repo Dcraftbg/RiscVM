@@ -279,9 +279,9 @@ impl <'a> VM <'a> {
                     let to_write = bytes.len().min(region.size);
                     let (bytes_to_write, left) = bytes.split_at(to_write);
                     bytes = left;
-                    let offset = addr-region.addr;
+                    let off = addr-region.addr;
                     addr += to_write;
-                    self.ram[region.addr+offset..region.addr+offset+bytes_to_write.len()].copy_from_slice(bytes_to_write);
+                    region.write(self, off, bytes_to_write).expect("Failed to write");
                 }
             }
         }
@@ -289,7 +289,6 @@ impl <'a> VM <'a> {
     }
 
     fn read(&mut self, mut addr: usize, mut bytes: &mut [u8]) {
-        assert!(addr+bytes.len() <= self.ram.len(), "Trying to read to address 0x{:08X}, {} bytes, but RAM is only {} bytes", addr, bytes.len(), self.ram.len());
         while !bytes.is_empty() {
             let region = match self.regions.find_region(addr) {
                 Some(v) => {
@@ -302,11 +301,10 @@ impl <'a> VM <'a> {
             let to_read = bytes.len().min(region.size);
             let (bytes_to_read, left) = bytes.split_at_mut(to_read);
             bytes = left;
-            let offset = addr-region.addr;
+            let off = addr-region.addr;
             addr += to_read;
-            bytes_to_read.copy_from_slice(&self.ram[region.addr+offset..region.addr+offset+bytes_to_read.len()]);
+            region.read(self, off, bytes_to_read).expect("Failed to read");
         }
-        bytes.copy_from_slice(&self.ram[addr..addr+bytes.len()])
     }
     #[inline]
     fn read_u16(&mut self, addr: usize) -> u16 {
@@ -496,6 +494,16 @@ struct Build {
 struct Region {
     addr: usize,
     size: usize
+}
+impl Region {
+    fn write(&self, vm: &mut VM, off: usize, bytes: &[u8]) -> Result<(), ()> {
+        vm.ram[self.addr+off..self.addr+off+bytes.len()].copy_from_slice(bytes);
+        Ok(())
+    }
+    fn read(&self, vm: &mut VM, off: usize, bytes: &mut [u8]) -> Result<(), ()> {
+        bytes.copy_from_slice(&vm.ram[self.addr+off..self.addr+off+bytes.len()]);
+        Ok(())
+    }
 }
 struct RegionList(Box<[Region]>);
 impl RegionList {
