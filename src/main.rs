@@ -71,7 +71,7 @@ fn main() -> ExitCode {
                 size: data.len()-EXIT+1,
             }
         ].into_boxed_slice());
-    let mut vm = vm::VM::new(simple_layout, &mut data);
+    let mut vm = vm::VM::new(&simple_layout, &mut data);
     vm.set_rsp(STACK_BASE);
     if build.dbg {
         let mut debugger = dbg::Dbg::new(vm);

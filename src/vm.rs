@@ -3,20 +3,20 @@ use crate::region::RegionList;
 use crate::inst::{inst_len, Inst32};
 use crate::disasm::Disasm32;
 
-pub struct VM<'a> {
-    pub regions: RegionList,
+pub struct VM<'a, 'rlist> {
+    pub regions: &'rlist RegionList,
     pub ram: &'a mut [u8],
     pub regs: [i32; 32],
     pub ip: i32
 }
 
-impl <'a> VM <'a> {
+impl <'a, 'rlist> VM <'a, 'rlist> {
     #[inline]
     pub fn set_rsp(&mut self, rsp: usize)  {
         assert!(rsp < u32::MAX as usize);
         self.regs[2] = rsp as i32;
     }
-    pub fn new(regions: RegionList, ram: &'a mut [u8]) -> Self {
+    pub fn new(regions: &'rlist RegionList, ram: &'a mut [u8]) -> Self {
         Self { ram, regions, ip: 0, regs: [0; 32] }
     }
     pub fn ip(&self) -> usize {
@@ -25,13 +25,9 @@ impl <'a> VM <'a> {
     pub fn write(&mut self, mut addr: usize, mut bytes: &[u8]) {
         while !bytes.is_empty() {
             let region = match self.regions.find_region(addr) {
-                Some(v) => {
-                    v
-                }
-                None => {
-                    panic!("Exception: Out of bounds write at {:08X} (ip=0x{:08X}", addr, self.ip);
-                }
-            }.clone();
+                Some(v) => v,
+                None => panic!("Exception: Out of bounds write at {:08X} (ip=0x{:08X})", addr, self.ip),
+            };
             let to_write = bytes.len().min(region.size);
             let (bytes_to_write, left) = bytes.split_at(to_write);
             bytes = left;
@@ -45,8 +41,8 @@ impl <'a> VM <'a> {
         while !bytes.is_empty() {
             let region = match self.regions.find_region(addr) {
                 Some(v) => v,
-                None => panic!("Exception: Out of bounds write at {:08X} (ip=0x{:08X})", addr, self.ip),
-            }.clone();
+                None => panic!("Exception: Out of bounds read at {:08X} (ip=0x{:08X})", addr, self.ip),
+            };
             let to_read = bytes.len().min(region.size);
             let (bytes_to_read, left) = bytes.split_at_mut(to_read);
             bytes = left;
