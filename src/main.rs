@@ -235,34 +235,16 @@ struct VM<'a> {
     regs: [i32; 32],
     ip: i32
 }
+
 impl <'a> VM <'a> {
     #[inline]
     fn set_rsp(&mut self, rsp: usize)  {
         assert!(rsp < u32::MAX as usize);
         self.regs[2] = rsp as i32;
     }
-    fn new(ram: &'a mut [u8]) -> Self {
+    fn new(regions: RegionList, ram: &'a mut [u8]) -> Self {
         let ram_len = ram.len();
-        Self { ram, regions: RegionList(
-                vec![
-                    Region {
-                        addr: 0,
-                        size: SERIAL_OUT
-                    },
-                    Region {
-                        addr: SERIAL_OUT,
-                        size: 1
-                    },
-                    Region {
-                        addr: EXIT,
-                        size: 1
-                    },
-                    Region {
-                        addr: EXIT+1,
-                        size: ram_len-EXIT+1,
-                    }
-                ].into_boxed_slice()
-            ), ip: 0, regs: [0; 32] }
+        Self { ram, regions, ip: 0, regs: [0; 32] }
     }
     fn ip(&self) -> usize {
         self.ip as u32 as usize
@@ -559,7 +541,26 @@ fn main() -> ExitCode {
         Ok(v) => v,
     };
     data.resize(RAM_SIZE.max(data.len()), 0);
-    let mut vm = VM::new(&mut data);
+    let simple_layout = RegionList(
+        vec![
+            Region {
+                addr: 0,
+                size: SERIAL_OUT
+            },
+            Region {
+                addr: SERIAL_OUT,
+                size: 1
+            },
+            Region {
+                addr: EXIT,
+                size: 1
+            },
+            Region {
+                addr: EXIT+1,
+                size: data.len()-EXIT+1,
+            }
+        ].into_boxed_slice());
+    let mut vm = VM::new(simple_layout, &mut data);
     vm.set_rsp(STACK_BASE);
     if build.dbg {
         let mut debugger = Dbg::new(vm);
