@@ -229,29 +229,8 @@ impl fmt::Display for Disasm32 {
         }
     }
 }
-struct Reader<'a> {
-    data: &'a [u8],
-}
-impl <'a> Reader <'a> {
-    #[inline]
-    const fn new(data: &'a [u8]) -> Self {
-        Self { data }
-    }
-    #[inline]
-    fn peak_u16(&self) -> Option<u16> {
-        if self.data.len() < 2 { return None; }
-        Some(u16::from_le_bytes(self.data[..2].try_into().unwrap()))
-    }
-
-    #[inline]
-    fn next_u32(&mut self) -> Option<u32> {
-        if self.data.len() < 4 { return None; }
-        let v = u32::from_le_bytes(self.data[..4].try_into().unwrap());
-        self.data = &self.data[4..];
-        Some(v)
-    }
-}
 struct VM<'a> {
+    regions: RegionList,
     ram: &'a mut [u8],
     regs: [i32; 32],
     ip: i32
@@ -263,12 +242,20 @@ impl <'a> VM <'a> {
         self.regs[2] = rsp as i32;
     }
     fn new(ram: &'a mut [u8]) -> Self {
-        Self { ram, ip: 0, regs: [0; 32] }
+        let ram_len = ram.len();
+        Self { ram, regions: RegionList(
+                vec![
+                    Region {
+                        addr: 0,
+                        size: ram_len
+                    }
+                ].into_boxed_slice()
+            ), ip: 0, regs: [0; 32] }
     }
     fn ip(&self) -> usize {
         self.ip as u32 as usize
     }
-    fn write(&mut self, addr: usize, bytes: &[u8]) {
+    fn write(&mut self, mut addr: usize, mut bytes: &[u8]) {
         const SERIAL_OUT: usize = 0x6969;
         const EXIT: usize = 0x7000;
         match (addr, bytes.len()) {
@@ -280,24 +267,67 @@ impl <'a> VM <'a> {
                 exit(bytes[0] as i32)
             }
             _ => {
-                assert!(addr+bytes.len() <= self.ram.len(), "Trying to write to address 0x{:08X}, {} bytes, but RAM is only {} bytes", addr, bytes.len(), self.ram.len());
-                self.ram[addr..addr+bytes.len()].copy_from_slice(bytes)
+                while !bytes.is_empty() {
+                    let region = match self.regions.find_region(addr) {
+                        Some(v) => {
+                            v
+                        }
+                        None => {
+                            panic!("Exception: Out of bounds write at {:08X} (ip=0x{:08X}", addr, self.ip);
+                        }
+                    }.clone();
+                    let to_write = bytes.len().min(region.size);
+                    let (bytes_to_write, left) = bytes.split_at(to_write);
+                    bytes = left;
+                    let offset = addr-region.addr;
+                    addr += to_write;
+                    self.ram[region.addr+offset..region.addr+offset+bytes_to_write.len()].copy_from_slice(bytes_to_write);
+                }
             }
         }
 
     }
 
-    fn read(&mut self, addr: usize, bytes: &mut [u8]) {
+    fn read(&mut self, mut addr: usize, mut bytes: &mut [u8]) {
         assert!(addr+bytes.len() <= self.ram.len(), "Trying to read to address 0x{:08X}, {} bytes, but RAM is only {} bytes", addr, bytes.len(), self.ram.len());
+        while !bytes.is_empty() {
+            let region = match self.regions.find_region(addr) {
+                Some(v) => {
+                    v
+                }
+                None => {
+                    panic!("Exception: Out of bounds write at {:08X} (ip=0x{:08X})", addr, self.ip);
+                }
+            }.clone();
+            let to_read = bytes.len().min(region.size);
+            let (bytes_to_read, left) = bytes.split_at_mut(to_read);
+            bytes = left;
+            let offset = addr-region.addr;
+            addr += to_read;
+            bytes_to_read.copy_from_slice(&self.ram[region.addr+offset..region.addr+offset+bytes_to_read.len()]);
+        }
         bytes.copy_from_slice(&self.ram[addr..addr+bytes.len()])
     }
-    fn disasm(&self, addr: usize) -> usize {
-        let mut r = Reader::new(&self.ram[addr..]);
-        let tag = r.peak_u16().expect("Premature End Of Mem");
+    #[inline]
+    fn read_u16(&mut self, addr: usize) -> u16 {
+        let mut tag_bytes: [u8; 2] = [0; 2];
+        self.read(addr, &mut tag_bytes);
+        u16::from_le_bytes(tag_bytes)
+    }
+
+    #[inline]
+    fn read_u32(&mut self, addr: usize) -> u32 {
+        let mut tag_bytes: [u8; 4] = [0; 4];
+        self.read(addr, &mut tag_bytes);
+        u32::from_le_bytes(tag_bytes)
+    }
+
+    fn disasm(&mut self, addr: usize) -> usize {
+        let tag = self.read_u16(addr);
         let len = inst_len(tag);
         match len {
             2 => {
-                let inst = Inst32::new(r.next_u32().expect("Premature End Of Mem"));
+                let inst = Inst32::new(self.read_u32(addr));
                 println!("{}",Disasm32(inst));
             }
             _ => panic!("Unsupported {} bit Instruction",len*16),
@@ -316,12 +346,11 @@ impl <'a> VM <'a> {
         self.regs[reg]
     }
     fn run(&mut self) {
-        let mut r = Reader::new(&self.ram[self.ip()..]);
-        let tag = r.peak_u16().expect("Premature End Of Mem");
+        let tag = self.read_u16(self.ip());
         let len = inst_len(tag);
         match len {
             2 => {
-                let inst = Inst32::new(r.next_u32().expect("Premature End Of Mem"));
+                let inst = Inst32::new(self.read_u32(self.ip()));
                 match inst.opcode() {
                     LUI_OP      => self.set_reg(inst.rd() as usize, inst.imm_U() << 12),
                     AUIPC_OP    => self.set_reg(inst.rd() as usize, self.ip + inst.imm_U() << 12),
@@ -449,7 +478,7 @@ impl <'a> Dbg <'a> {
             self.next();
         }
     }
-    fn disasm(&self) {
+    fn disasm(&mut self) {
         eprint!("{:08X}>",self.vm.ip);
         self.vm.disasm(self.vm.ip());
     }
@@ -461,6 +490,26 @@ struct Build {
     exe: String,
     ipath: String,
     dbg: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Region {
+    addr: usize,
+    size: usize
+}
+struct RegionList(Box<[Region]>);
+impl RegionList {
+    fn find_region(&self, addr: usize) -> Option<&Region> {
+        Some(&self.0[self.0.binary_search_by(|x| {
+            if addr < x.addr {
+                std::cmp::Ordering::Greater // Search in the left half
+            } else if addr >= x.addr + x.size {
+                std::cmp::Ordering::Less // Search in the right half
+            } else {
+                std::cmp::Ordering::Equal // Found the region
+            }
+        }).ok()?])
+    }
 }
 fn main() -> ExitCode {
     let mut args = env::args();
