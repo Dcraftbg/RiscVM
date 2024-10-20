@@ -8,8 +8,6 @@ mod vm;
 mod disasm;
 mod dbg;
 
-const RAM_SIZE: usize = 4096 * 4096;
-const STACK_BASE: usize = RAM_SIZE - 0x1000;
 #[allow(dead_code)]
 struct Build {
     exe: String,
@@ -19,6 +17,39 @@ struct Build {
 
 pub const SERIAL_OUT: usize = 0x6969;
 pub const EXIT: usize = 0x7000;
+struct Setup {
+    sp: usize,
+    layout: RegionList
+}
+fn setup_simple(ram: &mut Vec<u8>) -> Setup {
+    const RAM_SIZE: usize = 4096 * 4096;
+    const STACK_BASE: usize = RAM_SIZE - 0x1000;
+    ram.resize(RAM_SIZE.max(ram.len()), 0);
+    let layout = RegionList(
+        vec![
+            Region {
+                meta: MemoryMeta::new(),
+                addr: 0,
+                size: SERIAL_OUT
+            },
+            Region {
+                meta: SerialMeta::new(),
+                addr: SERIAL_OUT,
+                size: 1
+            },
+            Region {
+                meta: ExitMeta::new(),
+                addr: EXIT,
+                size: 1
+            },
+            Region {
+                meta: MemoryMeta::new(),
+                addr: EXIT+1,
+                size: ram.len()-EXIT+1,
+            }
+        ].into_boxed_slice());
+    Setup { sp: STACK_BASE, layout }
+}
 fn main() -> ExitCode {
     let mut args = env::args();
     let mut build = Build {
@@ -51,32 +82,9 @@ fn main() -> ExitCode {
         }
         Ok(v) => v,
     };
-    data.resize(RAM_SIZE.max(data.len()), 0);
-    let simple_layout = RegionList(
-        vec![
-            Region {
-                meta: MemoryMeta::new(),
-                addr: 0,
-                size: SERIAL_OUT
-            },
-            Region {
-                meta: SerialMeta::new(),
-                addr: SERIAL_OUT,
-                size: 1
-            },
-            Region {
-                meta: ExitMeta::new(),
-                addr: EXIT,
-                size: 1
-            },
-            Region {
-                meta: MemoryMeta::new(),
-                addr: EXIT+1,
-                size: data.len()-EXIT+1,
-            }
-        ].into_boxed_slice());
-    let mut vm = vm::VM::new(&simple_layout, &mut data);
-    vm.set_rsp(STACK_BASE);
+    let setup = setup_simple(&mut data);
+    let mut vm = vm::VM::new(&setup.layout, &mut data);
+    vm.set_rsp(setup.sp);
     if build.dbg {
         let mut debugger = dbg::Dbg::new(vm);
         let stdin = io::stdin();
